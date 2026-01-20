@@ -1,0 +1,85 @@
+// Firestore Security Rules
+// SeniorPill - Smart Medication Management System
+// Role-based access control for patient and caregiver data
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get user role
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Helper function to check if user is patient
+    function isPatient() {
+      return isAuthenticated() && getUserRole() == 'patient';
+    }
+    
+    // Helper function to check if user is caregiver
+    function isCaregiver() {
+      return isAuthenticated() && getUserRole() == 'caregiver';
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own data
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      // Users can create their own document during registration
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      // Users can update their own data
+      allow update: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Settings collection - device settings for each patient
+    match /settings/{patientId} {
+      // Patients can read their own settings
+      allow read: if isAuthenticated() && (
+        (isPatient() && request.auth.uid == patientId) ||
+        isCaregiver()
+      );
+      
+      // Only caregivers can update settings
+      allow update: if isAuthenticated() && isCaregiver();
+      
+      // Settings are created by the system, not directly by users
+      allow create: if isAuthenticated() && (
+        (isPatient() && request.auth.uid == patientId) ||
+        isCaregiver()
+      );
+    }
+    
+    // Dose logs collection
+    match /doseLogs/{logId} {
+      // Patients can read their own logs
+      // Caregivers can read logs for patients they manage
+      allow read: if isAuthenticated() && (
+        (isPatient() && resource.data.patientId == request.auth.uid) ||
+        isCaregiver()
+      );
+      
+      // Dose logs are created by the ESP32 device or system
+      // Patients cannot create logs directly (only through device)
+      allow create: if isAuthenticated() && (
+        (isPatient() && request.resource.data.patientId == request.auth.uid) ||
+        isCaregiver()
+      );
+      
+      // Logs should not be updated after creation (immutable)
+      allow update: if false;
+      allow delete: if false;
+    }
+    
+    // Devices collection (if needed for device management)
+    match /devices/{deviceId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isCaregiver();
+    }
+  }
+}
+
